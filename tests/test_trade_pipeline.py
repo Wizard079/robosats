@@ -2113,9 +2113,9 @@ class TradeTest(BaseAPITestCase):
         """
         Tests low price limit in buy order
         """
-        price = PriceUtil(1)
-        current_price = price.get_rate()
         price_limit_maker = maker_form_buy_with_range.copy()
+        price = PriceUtil(price_limit_maker["currency"])
+        current_price = price.get_rate()
         price_limit = current_price - 999
         price_limit_maker["price_limit"] = price_limit
         trade = Trade(self.client, price_limit_maker)
@@ -2131,9 +2131,9 @@ class TradeTest(BaseAPITestCase):
         """
         Tests high price limit in sell order
         """
-        price = PriceUtil(1)
-        current_price = price.get_rate()
         price_limit_maker = maker_form_buy_with_range.copy()
+        price = PriceUtil(price_limit_maker["currency"])
+        current_price = price.get_rate()
         price_limit_maker["type"] = Order.Types.SELL
         price_limit = current_price + 999
         price_limit_maker["price_limit"] = price_limit
@@ -2150,9 +2150,9 @@ class TradeTest(BaseAPITestCase):
         """
         Tests price limit auto pause
         """
-        price = PriceUtil(1)
-        current_price = price.get_rate()
         price_limit_maker = maker_form_buy_with_range.copy()
+        price = PriceUtil(price_limit_maker["currency"])
+        current_price = price.get_rate()
         price_limit_maker["price_limit"] = current_price + 999
         trade = Trade(self.client, price_limit_maker)
         trade.publish_order()
