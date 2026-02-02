@@ -1325,6 +1325,20 @@ components:
           format: decimal
           pattern: ^-?\d{0,10}(?:\.\d{0,8})?$
           nullable: true
+        price_limit:
+          type: number
+          format: decimal
+          nullable: true
+          description: >
+            Price limit for auto-pause.
+            For SELL orders: lower bound (pause if price falls below).
+            For BUY orders: upper bound (pause if price rises above).
+          example: 42000.0
+        auto_paused:
+          type: boolean
+          description: >
+            True if the order was automatically paused due to price limit.
+          example: false
         has_range:
           type: boolean
           default: false
@@ -1445,6 +1459,20 @@ components:
           format: decimal
           pattern: ^-?\d{0,10}(?:\.\d{0,8})?$
           nullable: true
+        price_limit:
+          type: number
+          format: decimal
+          nullable: true
+          description: >
+            Price limit for auto-pause.
+            For SELL orders: lower bound (pause if price falls below).
+            For BUY orders: upper bound (pause if price rises above).
+          example: 42000.0
+        auto_paused:
+          type: boolean
+          description: >
+            True if the order was automatically paused due to price limit.
+          example: false
         has_range:
           type: boolean
         min_amount:
@@ -1745,6 +1773,20 @@ components:
           format: decimal
           pattern: ^-?\d{0,10}(?:\.\d{0,8})?$
           nullable: true
+        price_limit:
+          type: number
+          format: decimal
+          nullable: true
+          description: >
+            Price limit for auto-pause.
+            For SELL orders: lower bound (pause if price falls below).
+            For BUY orders: upper bound (pause if price rises above).
+          example: 42000.0
+        auto_paused:
+          type: boolean
+          description: >
+            True if the order was automatically paused due to price limit.
+          example: false
         has_range:
           type: boolean
         min_amount:
