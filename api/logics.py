@@ -164,6 +164,91 @@ class Logics:
         else:
             return "Inactive"
 
+
+
+    @classmethod
+    def check_price_limit(cls, order):
+        """
+        Checks if a public order should be auto-paused based on price limit.
+
+        For SELL orders (maker is selling BTC): pause if price falls BELOW the limit
+        For BUY orders (maker is buying BTC): pause if price rises ABOVE the limit
+
+        Returns: (should_pause: bool, current_price: float)
+        """
+        if order.price_limit is None:
+            return False, None
+
+        if order.status != Order.Status.PUB:
+            return False, None
+
+        current_price, _ = cls.price_and_premium_now(order)
+        price_limit = float(order.price_limit)
+
+        # For SELL orders: maker doesn't want to sell if price drops too low
+        if order.type == Order.Types.SELL:
+            should_pause = current_price < price_limit
+        # For BUY orders: maker doesn't want to buy if price rises too high
+        else:  # Order.Types.BUY
+            should_pause = current_price > price_limit
+
+        return should_pause, current_price
+
+
+    @classmethod
+    def auto_pause_order_by_price(cls, order):
+        """
+        Auto-pauses an order if the price limit is exceeded.
+        Returns True if order was paused, False otherwise.
+        """
+        should_pause, current_price = cls.check_price_limit(order)
+
+        if should_pause and order.status == Order.Status.PUB:
+            order.update_status(Order.Status.PAU)
+            order.auto_paused = True
+            order.save(update_fields=["auto_paused"])
+            order.log(
+                f"Order auto-paused due to price limit. Current price: {current_price}, Limit: {order.price_limit}"
+            )
+            # Send nostr event for paused order
+            nostr_send_order_event.delay(order_id=order.id)
+
+            return True
+
+        return False
+
+
+    @classmethod
+    def validate_price_limit(cls, order):
+        """
+        Validates the price limit for an order.
+        The limit must make sense for the order type:
+        - For SELL: limit should be below current price (don't sell below this)
+        - For BUY: limit should be above current price (don't buy above this)
+        """
+        if order.price_limit is None:
+            return True, None
+
+        current_price, _ = cls.price_and_premium_now(order)
+        price_limit = float(order.price_limit)
+
+        if order.type == Order.Types.SELL:
+            # For sell orders, limit should be a lower bound (below current price)
+            if price_limit >= current_price:
+                return False, {
+                    "bad_request": f"For sell orders, price limit ({price_limit}) must be below current price ({current_price})",
+                    "error_code": 60,  # New error code for price limit validation
+                }
+        else:  # BUY order
+            # For buy orders, limit should be an upper bound (above current price)
+            if price_limit <= current_price:
+                return False, {
+                    "bad_request": f"For buy orders, price limit ({price_limit}) must be above current price ({current_price})",
+                    "error_code": 61,  # New error code for price limit validation
+                }
+
+        return True, None
+
     @classmethod
     def take(cls, order, user, amount=None):
         is_penalized, time_out = cls.is_penalized(user)
@@ -1742,29 +1827,57 @@ class Logics:
         return True, None
 
     def pause_unpause_public_order(order, user):
+        from api.tasks import nostr_send_order_event
+
         if not order.maker == user:
             return False, new_error(1032)
+
+        if order.status == Order.Status.PUB:
+            # Pause the order
+            order.update_status(Order.Status.PAU)
+            order.auto_paused = False  # Manual pause
+            order.save(update_fields=["auto_paused"])
+            order.log(
+                f"Robot({user.robot.id},{user.username}) paused the public order"
+            )
+            nostr_send_order_event.delay(order_id=order.id)
+
+        elif order.status == Order.Status.PAU:
+            # Check if price limit would be exceeded before allowing unpause
+            if order.price_limit is not None:
+                should_pause, current_price = Logics.check_price_limit(order)
+                # Temporarily set status to PUB to check price limit
+                original_status = order.status
+                order.status = Order.Status.PUB
+                should_pause, current_price = Logics.check_price_limit(order)
+                order.status = original_status  # Restore original status
+
+                if should_pause:
+                    order.log(
+                        f"Robot({user.robot.id},{user.username}) tried to unpause but price limit still exceeded. "
+                        f"Current: {current_price}, Limit: {order.price_limit}",
+                        level="WARN",
+                    )
+                    return False, {
+                        "bad_request": f"Cannot unpause: current price ({current_price:.2f}) exceeds your limit ({order.price_limit})",
+                        "error_code": 62,
+                    }
+
+            # Unpause the order
+            order.update_status(Order.Status.PUB)
+            order.auto_paused = False
+            order.save(update_fields=["auto_paused"])
+            order.log(
+                f"Robot({user.robot.id},{user.username}) made public the paused order"
+            )
+            nostr_send_order_event.delay(order_id=order.id)
+
         else:
-            if order.status == Order.Status.PUB:
-                order.update_status(Order.Status.PAU)
-                order.log(
-                    f"Robot({user.robot.id},{user.username}) paused the public order"
-                )
-
-                nostr_send_order_event.delay(order_id=order.id)
-            elif order.status == Order.Status.PAU:
-                order.update_status(Order.Status.PUB)
-                order.log(
-                    f"Robot({user.robot.id},{user.username}) made public the paused order"
-                )
-
-                nostr_send_order_event.delay(order_id=order.id)
-            else:
-                order.log(
-                    f"Robot({user.robot.id},{user.username}) tried to pause/unpause an order that was not public or paused",
-                    level="WARN",
-                )
-                return False, new_error(1033)
+            order.log(
+                f"Robot({user.robot.id},{user.username}) tried to pause/unpause an order that was not public or paused",
+                level="WARN",
+            )
+            return False, new_error(1033)
 
         return True, None
 

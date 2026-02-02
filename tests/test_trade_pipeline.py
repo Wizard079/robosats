@@ -15,8 +15,9 @@ from tests.test_api import BaseAPITestCase
 from tests.utils.node import add_invoice, set_up_regtest_network
 from tests.utils.pgp import sign_message
 from tests.utils.trade import Trade, maker_form_buy_with_range
-
+from tests.utils.price import PriceUtil
 from api.admin import OrderAdmin
+import time
 
 
 def read_file(file_path):
@@ -2108,3 +2109,62 @@ class TradeTest(BaseAPITestCase):
         data = response.json()
         self.assertIn("error_code", data)
         self.assertEqual(data["error_code"], 7000)
+    def test_low_price_limit_in_buy_order(self):
+        """
+        Tests low price limit in buy order
+        """
+        price = PriceUtil(1)
+        current_price = price.get_rate()
+        price_limit_maker = maker_form_buy_with_range.copy()
+        price_limit = current_price - 999
+        price_limit_maker["price_limit"] = price_limit
+        trade = Trade(self.client, price_limit_maker)
+        self.assertEqual(trade.response.status_code, 400)
+        data = trade.response.json()
+        self.assertEqual(data["error_code"], 61)
+        self.assertEqual(
+            data["bad_request"],
+            f"For buy orders, price limit ({price_limit}) must be above current price ({current_price})",
+        )
+
+    def test_high_price_limit_in_sell_order(self):
+        """
+        Tests high price limit in sell order
+        """
+        price = PriceUtil(1)
+        current_price = price.get_rate()
+        price_limit_maker = maker_form_buy_with_range.copy()
+        price_limit_maker["type"] = Order.Types.SELL
+        price_limit = current_price + 999
+        price_limit_maker["price_limit"] = price_limit
+        trade = Trade(self.client, price_limit_maker)
+        self.assertEqual(trade.response.status_code, 400)
+        data = trade.response.json()
+        self.assertEqual(data["error_code"], 60)
+        self.assertEqual(
+            data["bad_request"],
+            f"For sell orders, price limit ({price_limit}) must be below current price ({current_price})",
+        )
+
+    def test_price_limit_in_buy_order(self):
+        """
+        Tests price limit auto pause
+        """
+        price = PriceUtil(1)
+        current_price = price.get_rate()
+        price_limit_maker = maker_form_buy_with_range.copy()
+        price_limit_maker["price_limit"] = current_price + 999
+        trade = Trade(self.client, price_limit_maker)
+        trade.publish_order()
+        self.assertEqual(trade.response.status_code, 200)
+        data = trade.response.json()
+        self.assertEqual(data["status_message"], Order.Status(Order.Status.PUB).label)
+
+        # Raise the price
+        price.set_rate(current_price + 1000)
+
+        # check the order status should be paused in this case after 6 seconds( because the handle function sleeps for 5 seconds)
+        time.sleep(6)
+        trade.get_order()
+        data = trade.response.json()
+        self.assertEqual(data["status_message"], Order.Status(Order.Status.PAU).label)
